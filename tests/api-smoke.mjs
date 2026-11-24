@@ -1,0 +1,22 @@
+// Run against a LOCAL dev server only. Uses the starter's local-only mock sign-in.
+import assert from 'node:assert/strict';
+const origin=process.env.TEST_ORIGIN||'http://127.0.0.1:5173';
+if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin))throw Error('Only local development targets are permitted');
+const auth=await fetch(origin+'/signin-with-chatgpt?return_to=/',{redirect:'manual'});
+const cookie=auth.headers.getSetCookie().map(x=>x.split(';')[0]).join('; ');
+assert.ok(cookie,'Local mock sign-in must return a cookie');
+const post=(path,data,extra={})=>fetch(origin+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,Cookie:cookie,...extra},body:JSON.stringify(data)});
+let res=await fetch(origin+'/api/finds',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:'{}'});assert.equal(res.status,401);
+res=await post('/api/finds',{}, {Origin:'https://invalid.example'});assert.equal(res.status,403);
+res=await post('/api/finds',{});assert.equal(res.status,400);
+const report={item:'QA '+Date.now()+' porcini',form:'Dried',store:'Automated local test store',address:'Seattle test fixture',lat:47.61,lng:-122.33,seen:new Date().toISOString().slice(0,10),price:'$5 / 10 g',note:'Local QA fixture only'};
+res=await post('/api/finds',report);assert.equal(res.status,201);const {id}=await res.json();
+res=await post('/api/finds',report);assert.equal(res.status,409);
+let data=await (await fetch(origin+'/api/finds')).json();assert.ok(data.finds.some(x=>x.id===id));assert.ok(!('owner' in data.finds[0]));
+for(const kind of ['found','found'])assert.equal((await post('/api/feedback',{id,kind})).status,200);
+data=await (await fetch(origin+'/api/finds')).json();assert.equal(data.finds.find(x=>x.id===id).confirmations,1);
+assert.equal((await post('/api/feedback',{id,kind:'missing'})).status,200);
+data=await (await fetch(origin+'/api/finds')).json();assert.equal(data.finds.find(x=>x.id===id).confirmations,0);assert.equal(data.finds.find(x=>x.id===id).missing,1);
+assert.equal((await post('/api/feedback',{id,kind:'flag'})).status,200);
+assert.equal((await post('/api/feedback',{id:'missing-id',kind:'found'})).status,404);
+console.log('PASS: auth, same-origin protection, validation, persistence, duplicate rejection, public privacy, idempotent feedback, changed availability, flag storage and missing-report rejection.');
